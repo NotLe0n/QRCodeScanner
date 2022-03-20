@@ -21,17 +21,18 @@ public class Program
 	{
 		window = new WindowAbstraction("QR-Code scanner", ImGuiWindowFlags.NoResize | ImGuiWindowFlags.AlwaysAutoResize)
 		{
-			SizeMin = new(200, 200),
-			SizeMax = new(700, 500)
+			InitPosition = new(400, 400),
+			SizeMin = new(500, 200),
+			SizeMax = new(1400, 700)
 		};
-		window.SetDrawFunc(Draw);
 
+		window.SetDrawFunc(Draw);
 		await window.Run();
 	}
 
 	private static bool webCamOn;
 	private static int selectedItem;
-	private static string result = string.Empty;
+	private static string[] results;
 	private static void Draw()
 	{
 		string[] names = new string[filterInfoCollection.Count];
@@ -40,16 +41,17 @@ public class Program
 			names[i] = filterInfoCollection[i].Name;
 		}
 
+		ImGui.SetWindowFontScale(2f);
 		ImGui.Text("Video Gerät auswählen");
-		ImGui.SameLine();
-		ImGui.SetNextItemWidth(200);
 
+		ImGui.SameLine();
+		// video device selections
+		ImGui.SetNextItemWidth(400);
 		ImGui.Combo("", ref selectedItem, names, filterInfoCollection.Count);
 
 		ImGui.SameLine();
-
 		// if button was pressed
-		if (ImGui.Button($"Webcam {(webCamOn ? "aus" : "an")}schalten", new(130, 20)))
+		if (ImGui.Button($"Webcam {(webCamOn ? "aus" : "an")}schalten", new(260, 40)))
 		{
 			webCamOn = !webCamOn;
 
@@ -85,26 +87,35 @@ public class Program
 		// scan QR-Code and save contents in "result" in different thread
 		new Task(ScanQRCode).Start();
 
+		if (results is null)
+			return;
+
 		ImGui.SameLine();
 
-		ImGui.BeginChild("Inhalt_Child", new(200, 100));
-		ImGui.Text("Inhalt:\n" + result); // qr code inhalt anzeigen
+		ImGui.BeginChild("Inhalt_Child", new(600, 200), false);
 
-		// open link button should appear if the QR-Code has a link
-		if (IsValidURL(result))
+		for (int i = 0; i < results.Length; i++)
 		{
-			if (ImGui.Button("Link Öffnen"))
+			string result = results[i];
+			ImGui.TextWrapped($"QR-Code {i+1}:\n{result}"); // qr code inhalt anzeigen
+
+			// open link button should appear if the QR-Code has a link
+			if (IsValidURL(result) && ImGui.Button("Link Öffnen"))
 			{
-				var psi = new ProcessStartInfo()
-				{
-					UseShellExecute = true,
-					FileName = result
-				};
-				Process.Start(psi);
+				OpenLink(result);
 			}
+
+			if (results.Length > 1)
+				ImGui.Separator();
 		}
 
-		ImGui.EndChild();	
+		// button to clear the results list
+		if (ImGui.Button("Liste leeren"))
+		{
+			results = null;
+		}
+
+		ImGui.EndChild();
 	}
 
 	private static void StartVideoDevice()
@@ -134,10 +145,25 @@ public class Program
 		if (qrCodes is null)
 			return;
 
-		foreach (var qrCode in qrCodes)
+		// only add new results, do not remove results
+		if (results is not null && qrCodes.Length < results.Length)
+			return;
+
+		results = new string[qrCodes.Length];
+		for (int i = 0; i < qrCodes.Length; i++)
 		{
-			result = qrCode.ByteArrayToStr();
+			results[i] = qrCodes[i].ByteArrayToStr();
 		}
+	}
+
+	private static void OpenLink(string result)
+	{
+		var psi = new ProcessStartInfo()
+		{
+			UseShellExecute = true,
+			FileName = result
+		};
+		Process.Start(psi);
 	}
 
 	private static bool IsValidURL(string URL)

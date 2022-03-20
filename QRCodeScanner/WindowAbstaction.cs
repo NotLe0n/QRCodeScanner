@@ -12,6 +12,8 @@ internal class WindowAbstraction : Overlay
 {
     public Vector2 SizeMin { get; set; }
     public Vector2 SizeMax { get; set; }
+    public Vector2 InitSize { get; set; }
+    public Vector2 InitPosition { get; set; }
 
     public event Action OnExit;
     public readonly ImGuiWindowFlags windowState;
@@ -56,8 +58,8 @@ internal class WindowAbstraction : Overlay
             Environment.Exit(0);
         }
 
-        ImGui.SetWindowPos(title, new(Position.X, Position.Y), ImGuiCond.Once);
-        ImGui.SetWindowSize(title, new(Size.X, Size.Y), ImGuiCond.Once);
+        ImGui.SetWindowPos(title, new(InitPosition.X, InitPosition.Y), ImGuiCond.Once);
+        ImGui.SetWindowSize(title, new(InitSize.X, InitSize.Y), ImGuiCond.Once);
 
         try
         {
