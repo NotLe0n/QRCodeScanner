@@ -1,12 +1,18 @@
-﻿using ImGuiNET;
-using System.Threading.Tasks;
-using System.Drawing;
-using AForge.Video;
+﻿using AForge.Video;
 using AForge.Video.DirectShow;
+using ImGuiNET;
+using NativeFileDialogSharp;
 using SixLabors.ImageSharp.PixelFormats;
-using QRCodeDecoderLibrary;
+using System;
 using System.Diagnostics;
+using System.Drawing;
+using System.IO;
 using System.Text.RegularExpressions;
+using System.Threading.Tasks;
+using Clowd.Clipboard;
+using ZXing;
+using ZXing.Common;
+using System.Threading;
 
 namespace QRCodeScanner;
 
@@ -14,13 +20,11 @@ public class Program
 {
 	private static WindowAbstraction window;
 	private static VideoCaptureDevice captureDevice;
-	private static Bitmap image;
 	private static readonly FilterInfoCollection filterInfoCollection = new(FilterCategory.VideoInputDevice);
 
 	public static async Task Main()
 	{
-		window = new WindowAbstraction("QR-Code scanner", ImGuiWindowFlags.NoResize | ImGuiWindowFlags.AlwaysAutoResize)
-		{
+		window = new WindowAbstraction("QR-Code scanner", ImGuiWindowFlags.NoResize | ImGuiWindowFlags.AlwaysAutoResize) {
 			InitPosition = new(400, 400),
 			SizeMin = new(500, 200),
 			SizeMax = new(1400, 700)
@@ -31,13 +35,15 @@ public class Program
 	}
 
 	private static bool webCamOn;
+	private static Bitmap webcamImage;
 	private static int selectedItem;
-	private static string[] results;
+	private static string result;
+	private static bool byteMode;
+
 	private static void Draw()
 	{
 		string[] names = new string[filterInfoCollection.Count];
-		for (int i = 0; i < filterInfoCollection.Count; i++)
-		{
+		for (int i = 0; i < filterInfoCollection.Count; i++) {
 			names[i] = filterInfoCollection[i].Name;
 		}
 
@@ -51,8 +57,7 @@ public class Program
 
 		ImGui.SameLine();
 		// if button was pressed
-		if (ImGui.Button($"Webcam {(webCamOn ? "aus" : "an")}schalten", new(260, 40)))
-		{
+		if (ImGui.Button($"Webcam {(webCamOn ? "aus" : "an")}schalten", new(260, 40))) {
 			webCamOn = !webCamOn;
 
 			if (webCamOn) {
@@ -61,61 +66,128 @@ public class Program
 			else {
 				StopVideoDevice();
 			}
+
+			// scan QR-Code and save contents in "result" in different thread
+			var task = new Task(ScanWebcam);
+			task.Start();
 		}
 
-		//if (ImGui.Button("Bild Auswählen"))
-		//{
-			
-		//}
+		if (ImGui.Button("Bild Auswählen")) {
+			var result = Dialog.FileOpen(defaultPath: Environment.GetFolderPath(Environment.SpecialFolder.MyPictures));
+			if (result.IsOk) {
+				using var file = File.OpenRead(result.Path);
+				var image = new Bitmap(file);
 
-		if (!webCamOn || image is null)
-			return;
+				ScanQRCode(image);
+			}
+		}
+
+		ImGui.SameLine();
+
+		if (ImGui.Button("Bild Ausschneiden")) {
+			// open snip & sketch
+			Process.Start(new ProcessStartInfo("cmd.exe", "/c explorer ms-screenclip:") {
+				CreateNoWindow = true
+			});
+
+			Process[] processes = Array.Empty<Process>();
+			do {
+				processes = Process.GetProcessesByName("ScreenClippingHost");
+			}
+			while (processes.Length == 0);
+
+			processes[0].EnableRaisingEvents = true;
+			processes[0].Exited += (_, __) =>
+			{
+				using var handle = new ClipboardHandle();
+				handle.Open();
+
+				Bitmap image = handle.GetImage()?.GetBitmap();
+				ScanQRCode(image);
+			};
+		}
+
+		ImGui.SameLine();
+
+		ImGui.Checkbox("Bytes anzeigen", ref byteMode);
 
 		ImGui.Separator();
 
+		if (webCamOn && webcamImage is not null) {
+			DrawWebcamImage();
+		}
+
+		if (result is not null) {
+			DrawResults();
+		}
+	}
+
+	private static void DrawResults()
+	{
+		ImGui.SameLine();
+		ImGui.BeginChild("Inhalt_Child", new(600, 200), false);
+	
+		ImGui.TextWrapped($"QR-Code Inhalt:\n{result}"); // qr code inhalt anzeigen
+
+		ImGui.Separator();
+
+		// open link button should appear if the QR-Code has a link
+		if (IsValidURL(result) && ImGui.Button("Link Öffnen")) {
+			OpenLink(result);
+		}
+
+		ImGui.SameLine();
+
+		if (ImGui.Button("Kopieren")) {
+			using var clipboard = new ClipboardHandle();
+			clipboard.Open();
+			clipboard.SetText(result);
+		}
+
+		ImGui.SameLine();
+
+		// button to clear the results list
+		if (ImGui.Button("Entfernen")) {
+			result = null;
+		}
+
+		ImGui.EndChild();
+	}
+
+	private static void DrawWebcamImage()
+	{
 		ImGui.Text("Webcam Bild:");
 		window.RemoveImage("Webcam Image"); // remove image, or do nothing if it doesn't exist yet
-		window.AddOrGetImagePointer("Webcam Image", image.ToImageSharpImage<Rgba32>(), false, true, out var handle, out var w, out var h); // add/refresh image
+
+		Bitmap clone;
+		lock (webcamImage) {
+			clone = (Bitmap)webcamImage.Clone();
+		}
+		window.AddOrGetImagePointer("Webcam Image", clone.ToImageSharpImage<Rgba32>(), false, true, out var handle, out var w, out var h); // add/refresh image
 
 		// scale image
-		float ratioX =  window.SizeMin.X / w;
+		float ratioX = window.SizeMin.X / w;
 		float ratioY = window.SizeMin.Y / h;
 		float ratio = ratioX < ratioY ? ratioX : ratioY;
 
 		ImGui.Image(handle, new(w * ratio, h * ratio));
+	}
 
-		// scan QR-Code and save contents in "result" in different thread
-		new Task(ScanQRCode).Start();
+	private static void ScanWebcam()
+	{
+		while (webCamOn) {
+			if (webcamImage is null)
+				continue;
 
-		if (results is null)
-			return;
-
-		ImGui.SameLine();
-
-		ImGui.BeginChild("Inhalt_Child", new(600, 200), false);
-
-		for (int i = 0; i < results.Length; i++)
-		{
-			string result = results[i];
-			ImGui.TextWrapped($"QR-Code {i+1}:\n{result}"); // qr code inhalt anzeigen
-
-			// open link button should appear if the QR-Code has a link
-			if (IsValidURL(result) && ImGui.Button("Link Öffnen"))
-			{
-				OpenLink(result);
+			Bitmap clone;
+			lock (webcamImage) {
+				clone = (Bitmap)webcamImage.Clone();
 			}
 
-			if (results.Length > 1)
-				ImGui.Separator();
-		}
+			ScanQRCode(clone);
 
-		// button to clear the results list
-		if (ImGui.Button("Liste leeren"))
-		{
-			results = null;
+			Thread.Sleep(1000);
 		}
-
-		ImGui.EndChild();
 	}
 
 	private static void StartVideoDevice()
@@ -134,32 +206,32 @@ public class Program
 
 	private static void CaptureDevice_NewFrame(object sender, NewFrameEventArgs eventArgs)
 	{
-		image = eventArgs.Frame.Clone() as Bitmap;
+		webcamImage = eventArgs.Frame.Clone() as Bitmap;
 	}
 
-	private static void ScanQRCode()
+	private static readonly DecodingOptions decodingOptions = new() { TryInverted = true, TryHarder = true };
+	private static void ScanQRCode(Bitmap bitmap)
 	{
-		QRDecoder decoder = new();
-		// call image decoder method with file name
-		byte[][] qrCodes = decoder.ImageDecoder(image);
-		if (qrCodes is null)
+		if (result is not null)
 			return;
 
-		// only add new results, do not remove results
-		if (results is not null && qrCodes.Length < results.Length)
+		if (bitmap is null)
 			return;
 
-		results = new string[qrCodes.Length];
-		for (int i = 0; i < qrCodes.Length; i++)
-		{
-			results[i] = qrCodes[i].ByteArrayToStr();
+		BarcodeReader<Bitmap> reader = new(bmp => new BitmapLuminanceSource(bmp)) { AutoRotate = true };
+		reader.Options = decodingOptions;
+		Result decoded = reader.Decode(bitmap);
+
+		if (decoded is null) {
+			return;
 		}
+
+		result = byteMode ? decoded.RawBytes.ToHexString() : decoded.Text;
 	}
 
 	private static void OpenLink(string result)
 	{
-		var psi = new ProcessStartInfo()
-		{
+		var psi = new ProcessStartInfo() {
 			UseShellExecute = true,
 			FileName = result
 		};
