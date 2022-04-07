@@ -16,7 +16,6 @@
     <PackageReference Include="AForge.Video.DirectShow" Version="2.2.5" />
     <PackageReference Include="ClickableTransparentOverlay" Version="5.1.0" />
     <PackageReference Include="Clowd.Clipboard" Version="0.1.25" />
-    <PackageReference Include="Microsoft.Extensions.Logging" Version="6.0.0" />
     <PackageReference Include="NativeFileDialogSharp" Version="0.5.0" />
     <PackageReference Include="System.Drawing.Common" Version="6.0.0" />
     <PackageReference Include="ZXing.Net" Version="0.16.8" />

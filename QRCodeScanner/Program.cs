@@ -1,18 +1,18 @@
 ﻿using AForge.Video;
 using AForge.Video.DirectShow;
+using Clowd.Clipboard;
 using ImGuiNET;
 using NativeFileDialogSharp;
-using SixLabors.ImageSharp.PixelFormats;
 using System;
 using System.Diagnostics;
 using System.Drawing;
 using System.IO;
+using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Threading.Tasks;
-using Clowd.Clipboard;
 using ZXing;
 using ZXing.Common;
-using System.Threading;
 
 namespace QRCodeScanner;
 
@@ -163,7 +163,7 @@ public class Program
 		lock (webcamImage) {
 			clone = (Bitmap)webcamImage.Clone();
 		}
-		window.AddOrGetImagePointer("Webcam Image", clone.ToImageSharpImage<Rgba32>(), false, true, out var handle, out var w, out var h); // add/refresh image
+		window.AddOrGetImagePointer("Webcam Image", clone.ToImageSharpImage(), false, true, out var handle, out var w, out var h); // add/refresh image
 
 		// scale image
 		float ratioX = window.SizeMin.X / w;
@@ -226,7 +226,7 @@ public class Program
 			return;
 		}
 
-		result = byteMode ? decoded.RawBytes.ToHexString() : decoded.Text;
+		result = byteMode ? Encoding.UTF8.GetString(decoded.RawBytes) : decoded.Text;
 	}
 
 	private static void OpenLink(string result)
@@ -238,9 +238,9 @@ public class Program
 		Process.Start(psi);
 	}
 
+	private const string pattern = @"^(?:http(s)?:\/\/)?[\w.-]+(?:\.[\w\.-]+)+[\w\-\._~:/?#[\]@!\$&'\(\)\*\+,;=.]+$";
 	private static bool IsValidURL(string URL)
 	{
-		string pattern = @"^(?:http(s)?:\/\/)?[\w.-]+(?:\.[\w\.-]+)+[\w\-\._~:/?#[\]@!\$&'\(\)\*\+,;=.]+$";
 		var rgx = new Regex(pattern, RegexOptions.Compiled | RegexOptions.IgnoreCase);
 		return rgx.IsMatch(URL);
 	}
